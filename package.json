@@ -1,0 +1,63 @@
+{
+  "name": "devmock",
+  "version": "0.1.0",
+  "description": "SDK-level service mocker for OpenAI, Anthropic, Stripe, SendGrid, Twilio. Zero config, zero cost, zero real HTTP calls.",
+  "type": "module",
+  "license": "MIT",
+  "author": "devmock contributors",
+  "keywords": [
+    "mock", "testing", "openai", "anthropic", "stripe", "sendgrid", "twilio",
+    "sdk", "interceptor", "dev", "development", "fake", "stub"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devmock/devmock"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./register": {
+      "import": "./dist/register.js",
+      "require": "./dist/register.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "build:watch": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "demo": "npx tsx examples/demo.ts",
+    "prepublishOnly": "npm run build && npm test"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.98.0",
+    "@sendgrid/mail": "^8.1.6",
+    "@types/node": "^20.0.0",
+    "openai": "^4.0.0",
+    "stripe": "^17.7.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "twilio": "^6.0.2",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.7"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
