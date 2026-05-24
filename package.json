@@ -1,17 +1,17 @@
 {
-  "name": "devmock",
+  "name": "devmock-js",
   "version": "0.1.0",
   "description": "SDK-level service mocker for OpenAI, Anthropic, Stripe, SendGrid, Twilio. Zero config, zero cost, zero real HTTP calls.",
   "type": "module",
   "license": "MIT",
-  "author": "devmock contributors",
+  "author": "pixelartisanag",
   "keywords": [
     "mock", "testing", "openai", "anthropic", "stripe", "sendgrid", "twilio",
     "sdk", "interceptor", "dev", "development", "fake", "stub"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/devmock/devmock"
+    "url": "https://github.com/pixelartisanag/devmock"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
