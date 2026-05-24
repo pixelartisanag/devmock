@@ -10,6 +10,8 @@
 import type { ServiceHandler } from '../core/registry.js';
 import { inspector } from '../core/inspector.js';
 import { nanoid } from '../core/nanoid.js';
+import { applyDelay, getStreamDelay } from '../core/delay.js';
+import { getScenario } from '../core/scenario.js';
 
 type Message = { role: string; content: string };
 
@@ -122,8 +124,7 @@ function chatCompletionStreamResponse(body: Record<string, unknown>): Response {
         controller.close();
         return;
       }
-      // Small delay to simulate real streaming
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, getStreamDelay('openai')));
       controller.enqueue(encoder.encode(chunks[chunkIndex++]));
     },
   });
@@ -159,6 +160,13 @@ export const openaiHandler: ServiceHandler = {
   hostnames: ['api.openai.com'],
 
   async handleFetch(url: string, init?: RequestInit): Promise<Response> {
+    await applyDelay('openai');
+
+    const scenario = getScenario('openai');
+    if (scenario === 'rate_limit') return new Response(JSON.stringify({ error: { message: 'Rate limit exceeded', type: 'requests', code: 'rate_limit_exceeded' } }), { status: 429, headers: makeHeaders() });
+    if (scenario === 'context_length_exceeded') return new Response(JSON.stringify({ error: { message: 'Maximum context length exceeded', type: 'invalid_request_error', code: 'context_length_exceeded' } }), { status: 400, headers: makeHeaders() });
+    if (scenario === 'server_error') return new Response(JSON.stringify({ error: { message: 'The server had an error processing your request', type: 'server_error' } }), { status: 500, headers: makeHeaders() });
+
     const path = new URL(url).pathname;
     const bodyText = typeof init?.body === 'string' ? init.body : await (init?.body as ReadableStream | null)?.getReader().read().then((r) => new TextDecoder().decode(r.value)).catch(() => '{}') ?? '{}';
     const body: Record<string, unknown> = JSON.parse(bodyText || '{}');

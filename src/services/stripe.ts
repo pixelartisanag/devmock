@@ -17,6 +17,7 @@ import type { ServiceHandler } from '../core/registry.js';
 import { inspector } from '../core/inspector.js';
 import { nanoid } from '../core/nanoid.js';
 import { getScenario } from '../core/scenario.js';
+import { applyDelay } from '../core/delay.js';
 
 // ─── Stripe error builder ─────────────────────────────────────────────────────
 
@@ -265,6 +266,8 @@ export const stripeHandler: ServiceHandler = {
   hostnames: ['api.stripe.com'],
 
   async handleFetch(url: string, init?: RequestInit): Promise<Response> {
+    await applyDelay('stripe');
+
     const { pathname: path } = new URL(url);
     const method = (init?.method ?? 'GET').toUpperCase();
     const bodyText = typeof init?.body === 'string' ? init.body : '';

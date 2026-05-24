@@ -9,6 +9,7 @@
 import type { ServiceHandler } from '../core/registry.js';
 import { inspector } from '../core/inspector.js';
 import { nanoid } from '../core/nanoid.js';
+import { applyDelay } from '../core/delay.js';
 
 // SendGrid v3 /mail/send body shape (simplified)
 interface SendGridBody {
@@ -37,6 +38,8 @@ export const sendgridHandler: ServiceHandler = {
   hostnames: ['api.sendgrid.com'],
 
   async handleFetch(url: string, init?: RequestInit): Promise<Response> {
+    await applyDelay('sendgrid');
+
     const path = new URL(url).pathname;
 
     if (path === '/v3/mail/send' && init?.method?.toUpperCase() === 'POST') {

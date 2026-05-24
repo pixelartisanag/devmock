@@ -10,6 +10,7 @@ import type { ServiceHandler } from '../core/registry.js';
 import { inspector } from '../core/inspector.js';
 import { nanoid } from '../core/nanoid.js';
 import { getScenario } from '../core/scenario.js';
+import { applyDelay, getStreamDelay } from '../core/delay.js';
 
 type Message = { role: string; content: string | Array<{ type: string; text: string }> };
 
@@ -123,7 +124,7 @@ function messagesStreamResponse(body: Record<string, unknown>): Response {
   const stream = new ReadableStream({
     async pull(controller) {
       if (idx >= events.length) { controller.close(); return; }
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, getStreamDelay('anthropic')));
       controller.enqueue(encoder.encode(events[idx++]));
     },
   });
@@ -145,6 +146,8 @@ export const anthropicHandler: ServiceHandler = {
   hostnames: ['api.anthropic.com'],
 
   async handleFetch(url: string, init?: RequestInit): Promise<Response> {
+    await applyDelay('anthropic');
+
     const path = new URL(url).pathname;
     const scenario = getScenario('anthropic') as string;
 

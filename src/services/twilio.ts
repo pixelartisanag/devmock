@@ -10,6 +10,7 @@
 import type { ServiceHandler } from '../core/registry.js';
 import { inspector } from '../core/inspector.js';
 import { nanoid } from '../core/nanoid.js';
+import { applyDelay } from '../core/delay.js';
 
 function parseFormBody(body: string): Record<string, string> {
   const params: Record<string, string> = {};
@@ -25,6 +26,8 @@ export const twilioHandler: ServiceHandler = {
   hostnames: ['api.twilio.com'],
 
   async handleFetch(url: string, init?: RequestInit): Promise<Response> {
+    await applyDelay('twilio');
+
     const path = new URL(url).pathname;
     const isMessages = /\/2010-04-01\/Accounts\/[^/]+\/Messages(\.json)?$/.test(path);
 
