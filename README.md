@@ -26,9 +26,17 @@ npm install --save-dev devmock-js
   - [SendGrid](#sendgrid)
   - [Twilio](#twilio)
 - [Scenarios — Simulating Errors](#scenarios--simulating-errors--edge-cases)
+  - [Persistent scenario](#persistent-scenario)
+  - [onNextCall — single-use override](#onnextcall--single-use-override)
+  - [sequence — ordered rotation](#sequence--ordered-rotation)
+  - [failAfter — succeed N times then fail](#failafter--succeed-n-times-then-fail)
+  - [Priority order](#priority-order)
+- [Delay — Latency Simulation](#delay--latency-simulation)
+- [Seed — Deterministic IDs](#seed--deterministic-ids)
 - [Inspector API](#inspector-api)
 - [How It Works](#how-it-works)
 - [SDK Instantiation Order](#sdk-instantiation-order)
+- [Changelog](#changelog)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -292,59 +300,122 @@ console.log(smsList[0].sid);  // "SMmock..."
 
 ## Scenarios — Simulating Errors & Edge Cases
 
-Use scenarios to test how your application handles failures — without needing to trigger real API errors.
+Five levels of scenario control, from coarse to fine-grained.
+
+### Persistent scenario
+
+Applies to **all calls** until explicitly cleared.
 
 ```typescript
 // ── Stripe ───────────────────────────────────────────────────────────
-DevMock.scenario('stripe', 'card_declined');      // generic decline
-DevMock.scenario('stripe', 'insufficient_funds'); // 402 insufficient_funds
-DevMock.scenario('stripe', 'expired_card');       // 402 expired_card
-DevMock.scenario('stripe', 'processing_error');   // 402 processing_error
-DevMock.scenario('stripe', 'requires_action');    // 3DS — status: requires_action
+DevMock.scenario('stripe', 'card_declined');      // HTTP 402 — generic decline
+DevMock.scenario('stripe', 'insufficient_funds'); // HTTP 402 — insufficient_funds
+DevMock.scenario('stripe', 'expired_card');       // HTTP 402 — expired_card
+DevMock.scenario('stripe', 'processing_error');   // HTTP 402 — processing_error
+DevMock.scenario('stripe', 'requires_action');    // status: requires_action (3DS)
 
 // ── OpenAI ───────────────────────────────────────────────────────────
-DevMock.scenario('openai', 'rate_limit');               // 429
-DevMock.scenario('openai', 'context_length_exceeded');  // 400
-DevMock.scenario('openai', 'server_error');             // 500
+DevMock.scenario('openai', 'rate_limit');              // HTTP 429
+DevMock.scenario('openai', 'context_length_exceeded'); // HTTP 400
+DevMock.scenario('openai', 'server_error');            // HTTP 500
 
 // ── Anthropic ────────────────────────────────────────────────────────
-DevMock.scenario('anthropic', 'rate_limit');  // 429
-DevMock.scenario('anthropic', 'overloaded');  // 529
+DevMock.scenario('anthropic', 'rate_limit');  // HTTP 429
+DevMock.scenario('anthropic', 'overloaded');  // HTTP 529
 
 // ── Twilio ───────────────────────────────────────────────────────────
-DevMock.scenario('twilio', 'invalid_number'); // 400
+DevMock.scenario('twilio', 'invalid_number'); // HTTP 400
 
-// Reset a specific service to success
+// Reset to success
 DevMock.clearScenario('stripe');
-
-// All scenarios are cleared automatically on DevMock.disable()
+// All scenarios cleared automatically on DevMock.disable()
 ```
 
-### Example — testing payment failure handling
+---
+
+### `onNextCall` — single-use override
+
+Fires once for the **next call only**, then auto-reverts. No cleanup needed.
 
 ```typescript
-it('shows an error message when card is declined', async () => {
-  DevMock.scenario('stripe', 'card_declined');
+DevMock.onNextCall('stripe', 'card_declined');
 
-  const result = await checkout({ amount: 2000, currency: 'usd' });
+await stripe.paymentIntents.create({ amount: 1000, currency: 'usd' }); // ← declines
+await stripe.paymentIntents.create({ amount: 1000, currency: 'usd' }); // ← succeeds
+```
 
-  expect(result.success).toBe(false);
-  expect(result.error).toMatch(/card.*declined/i);
+```typescript
+it('shows error on first attempt, succeeds on retry', async () => {
+  DevMock.onNextCall('openai', 'rate_limit');
 
-  // Confirm no confirmation email was sent
-  expect(DevMock.inspect().emails()).toHaveLength(0);
-});
+  // First call fails
+  await expect(callAI('Hello')).rejects.toThrow();
 
-it('retries on Anthropic overload', async () => {
-  let calls = 0;
-  DevMock.scenario('anthropic', 'overloaded');
-
-  // Your service should retry — after 1 failed attempt, succeed
-  setTimeout(() => DevMock.clearScenario('anthropic'), 50);
-
-  const result = await generateWithRetry('Write a summary');
+  // Second call succeeds — no clearScenario() needed
+  const result = await callAI('Hello');
   expect(result).toBeDefined();
 });
+```
+
+---
+
+### `sequence` — ordered rotation
+
+Cycles through scenarios in order. **Repeats the last item** indefinitely once exhausted.
+
+```typescript
+DevMock.sequence('stripe', ['success', 'success', 'card_declined']);
+// call 1 → success
+// call 2 → success
+// call 3 → card_declined
+// call 4 → card_declined  (repeats last)
+// call 5 → card_declined  ...
+```
+
+```typescript
+it('shows degraded UI after two successes', async () => {
+  DevMock.sequence('openai', ['success', 'success', 'rate_limit']);
+
+  const r1 = await callAI('msg 1'); // success
+  const r2 = await callAI('msg 2'); // success
+  await expect(callAI('msg 3')).rejects.toThrow(); // rate_limit
+});
+```
+
+---
+
+### `failAfter` — succeed N times then fail
+
+Succeeds exactly N times, then switches to the error scenario **permanently**.
+Perfect for testing retry logic and circuit breakers.
+
+```typescript
+DevMock.failAfter('stripe', 2, 'card_declined');
+// call 1 → success
+// call 2 → success
+// call 3 → card_declined
+// call 4 → card_declined  (permanent)
+```
+
+```typescript
+it('circuit breaker opens after 3 failures', async () => {
+  DevMock.failAfter('openai', 0, 'server_error'); // fail immediately
+
+  for (let i = 0; i < 3; i++) {
+    await expect(callAI('test')).rejects.toThrow();
+  }
+  expect(circuitBreaker.isOpen()).toBe(true);
+});
+```
+
+---
+
+### Priority order
+
+When multiple controls are active simultaneously, this precedence applies:
+
+```
+onNextCall  ›  sequence  ›  failAfter  ›  scenario()  ›  success (default)
 ```
 
 ---
@@ -401,6 +472,76 @@ interface PaymentEntry {
   timestamp: Date;
 }
 ```
+
+---
+
+## Delay — Latency Simulation
+
+Simulate realistic network latency to test loading states, skeleton screens, progress indicators, and timeouts.
+
+```typescript
+// Fixed delay
+DevMock.delay('openai', 800);   // 800ms on every OpenAI call
+DevMock.delay('stripe', 300);   // 300ms on every Stripe call
+
+// Random range — different latency each call
+DevMock.delay('stripe', { min: 100, max: 600 });
+
+// Global fallback — applies to all services without a specific delay
+DevMock.delay('*', 200);
+
+// Remove delay for a service
+DevMock.delay('openai', 0);
+
+// Streaming chunk delay (OpenAI / Anthropic)
+// Controls the pause between each word in a streamed response. Default: 10ms.
+DevMock.streamDelay('openai', 50);     // 50ms between words — slow typewriter
+DevMock.streamDelay('anthropic', 0);   // instant (no per-chunk delay)
+```
+
+All delays are cleared automatically on `DevMock.disable()`.
+
+```typescript
+it('shows skeleton screen during slow AI response', async () => {
+  DevMock.delay('openai', 500);
+
+  const startedAt = Date.now();
+  render(<MyComponent />);
+
+  expect(screen.getByTestId('skeleton')).toBeInTheDocument();
+
+  await waitForElementToBeRemoved(() => screen.queryByTestId('skeleton'));
+  expect(Date.now() - startedAt).toBeGreaterThanOrEqual(500);
+});
+```
+
+---
+
+## Seed — Deterministic IDs
+
+By default, devmock-js generates random IDs on every run (`pi_mock_xK9m...`).
+Use `seed()` to make all generated IDs reproducible — essential for **snapshot tests**.
+
+```typescript
+DevMock.seed(42);
+
+const pi = await stripe.paymentIntents.create({ amount: 1000, currency: 'usd' });
+console.log(pi.id); // "pi_mock_NhGxmRrLvWzQ" — same every time with seed 42
+```
+
+```typescript
+it('matches payment intent snapshot', async () => {
+  DevMock.seed(1);
+
+  const pi = await stripe.paymentIntents.create({ amount: 4999, currency: 'ron' });
+
+  expect(pi).toMatchSnapshot();
+  // Snapshot stays stable across CI runs because the ID is always the same
+});
+```
+
+The PRNG is [mulberry32](https://gist.github.com/tommyettinger/46a874533244883189143505d203312c) — fast, zero dependencies, good distribution.
+Seed is reset automatically on `DevMock.disable()`.
 
 ---
 
@@ -463,6 +604,30 @@ const anthropic = new Anthropic({ apiKey: '...' }); // ✓ after enable
 const anthropic = new Anthropic({ apiKey: '...' }); // ✗ before enable
 DevMock.enable();
 ```
+
+---
+
+## Changelog
+
+### v0.2.0
+- **`DevMock.seed(n)`** — deterministic ID generation via mulberry32 PRNG
+- **`DevMock.delay(service, ms|{min,max})`** — per-service and global latency simulation
+- **`DevMock.streamDelay(service, ms)`** — configurable per-chunk delay for SSE streaming
+- **`DevMock.onNextCall(service, scenario)`** — single-use scenario override, auto-consumed
+- **`DevMock.sequence(service, scenarios[])`** — ordered scenario rotation, repeats last
+- **`DevMock.failAfter(service, n, scenario)`** — succeed N times then fail permanently
+- `DevMock.disable()` now clears delays and resets seed automatically
+
+### v0.1.0
+- Initial release
+- OpenAI (chat completions streaming + non-streaming, embeddings)
+- Anthropic (messages API streaming + non-streaming)
+- Stripe (payment intents, checkout sessions, customers, refunds)
+- SendGrid (mail/send with full email capture)
+- Twilio (Messages API with SMS capture)
+- Inspector: `emails()`, `sms()`, `aiCalls()`, `payments()`, `clear()`
+- Basic scenario system via `DevMock.scenario()`
+- Production guard
 
 ---
 
